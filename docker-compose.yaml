@@ -101,6 +101,8 @@ services:
       retries: 5
       start_period: 5s
     restart: always
+    networks: 
+      - clever-airflow-nt
 
   redis:
     image: redis:latest
@@ -113,6 +115,8 @@ services:
       retries: 50
       start_period: 30s
     restart: always
+    networks: 
+      - clever-airflow-nt
 
   airflow-webserver:
     <<: *airflow-common
@@ -130,6 +134,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks: 
+      - clever-airflow-nt
 
   airflow-scheduler:
     <<: *airflow-common
@@ -145,6 +151,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks: 
+      - clever-airflow-nt
 
   airflow-worker:
     <<: *airflow-common
@@ -167,6 +175,9 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks: 
+      - clever-db-nt
+      - clever-airflow-nt
 
   airflow-triggerer:
     <<: *airflow-common
@@ -182,6 +193,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks: 
+      - clever-airflow-nt
 
   airflow-init:
     <<: *airflow-common
@@ -260,6 +273,8 @@ services:
     user: "0:0"
     volumes:
       - ${AIRFLOW_PROJ_DIR:-.}:/sources
+    networks: 
+      - clever-airflow-nt
 
   airflow-cli:
     <<: *airflow-common
@@ -273,7 +288,9 @@ services:
       - bash
       - -c
       - airflow
-
+    networks: 
+      - clever-airflow-nt
+  
   # You can enable flower by adding "--profile flower" option e.g. docker-compose --profile flower up
   # or by explicitly targeted on the command line e.g. docker-compose up flower.
   # See: https://docs.docker.com/compose/profiles/
@@ -295,6 +312,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks: 
+      - clever-airflow-nt
 
   postgres_clever:
     image: postgres:13
@@ -312,6 +331,8 @@ services:
     restart: always
     ports:
       - 5433:5432
+    networks: 
+      - clever-db-nt
 
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -325,6 +346,8 @@ services:
       - 8081:80
     volumes:
       - pgadmin-volume:/var/lib/pgadmin
+    networks: 
+      - clever-db-nt
 
   jupyter:
     image: jupyter/pyspark-notebook
@@ -333,9 +356,15 @@ services:
     command: start-notebook.sh --NotebookApp.token=''
     volumes:
       - ./notebooks:/home/jovyan/work
+    networks: 
+    - clever-db-nt
 
 
 volumes:
   postgres-airflow-db-volume:
   postgres-clever-db-volume:
   pgadmin-volume:
+
+networks:
+  clever-db-nt:
+  clever-airflow-nt:
