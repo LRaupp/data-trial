@@ -34,7 +34,7 @@ with DAG("clever_main_DAG", default_args=default_args, catchup=False, schedule_i
             task_id=task_id,
             python_callable=upload_to_postgres,
             dag=dag,
-            execution_timeout=timedelta(milliseconds=2),
+            execution_timeout=timedelta(seconds=20),
             op_kwargs={
                 "file_name": file
             }
