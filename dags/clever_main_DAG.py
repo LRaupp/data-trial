@@ -1,4 +1,7 @@
 from datetime import datetime, timedelta
+
+from scripts.clever_main_pipeline import upload_to_postgres
+
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
