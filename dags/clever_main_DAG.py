@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+from scripts.spark_jobs import processors as P
 from scripts.clever_main_pipeline import upload_to_postgres
 
 from airflow import DAG
@@ -21,6 +22,14 @@ datasets = [
 
 ]
 
+jobs_processors = [
+    P.FMCSACompaniesProcessor(),
+    P.FMCSACompanySnapshotProcessor(),
+    P.FMCSAComplaintsProcessor(),
+    P.GoogleReviewsProcessor(),
+    P.GoogleMapsCompanyProfilesProcessor()
+]
+
 with DAG("clever_main_DAG", default_args=default_args, catchup=False, schedule_interval='20 0 * * *', max_active_runs=1) as dag:
 
     start_task = EmptyOperator(task_id='Start', dag=dag)
@@ -38,6 +47,26 @@ with DAG("clever_main_DAG", default_args=default_args, catchup=False, schedule_i
             op_kwargs={
                 "file_name": file
             }
+        )
+
+        start_task.set_downstream(upload_to_postgres_task)
+        upload_to_postgres_task.set_downstream(finish_task)
+
+
+# This runs the Spark jobs in the same environment as Airflow. 
+# In a real scenario, these jobs would be executed on a cluster using operators like DatabricksRunNowOperator, EmrAddStepsOperator, etc.
+with DAG("clever_spark_DAG", default_args=default_args, catchup=False, schedule_interval='20 0 * * *', max_active_runs=1) as dag:
+
+    start_task = EmptyOperator(task_id='Start', dag=dag)
+    finish_task = EmptyOperator(task_id='Finish', dag=dag)
+
+    for processor in jobs_processors:
+        task_id = f"upload_to_postgres_{processor.target_table_name}"
+        upload_to_postgres_task = PythonOperator(
+            task_id=task_id,
+            python_callable=processor.run,
+            dag=dag,
+            execution_timeout=timedelta(seconds=60), # Spark may take some time to download packages from maeven on first run
         )
 
         start_task.set_downstream(upload_to_postgres_task)
