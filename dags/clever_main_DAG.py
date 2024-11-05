@@ -30,7 +30,15 @@ jobs_processors = [
     P.GoogleMapsCompanyProfilesProcessor()
 ]
 
-with DAG("clever_main_DAG", default_args=default_args, catchup=False, schedule_interval='20 0 * * *', max_active_runs=1) as dag:
+# The DAG is fiexed and functioning, but it does not adhere to the processing standards needed for the dashboard defined in the Spark DAG
+with DAG(
+    "clever_main_DAG", 
+    default_args=default_args, 
+    catchup=False, 
+    schedule_interval='20 0 * * *', 
+    max_active_runs=1,
+    is_paused_upon_creation=True # Paused to use clever_spark_DAG instead
+) as dag:
 
     start_task = EmptyOperator(task_id='Start', dag=dag)
     finish_task = EmptyOperator(task_id='Finish', dag=dag)
@@ -54,12 +62,20 @@ with DAG("clever_main_DAG", default_args=default_args, catchup=False, schedule_i
 
 
 # This runs the Spark jobs in the same environment as Airflow. 
+# My idea is to explore the use of Pandas for data analysis and Spark for preprocessing.
 # In a real scenario, these jobs would be executed on a cluster using operators like DatabricksRunNowOperator, EmrAddStepsOperator, etc.
-with DAG("clever_spark_DAG", default_args=default_args, catchup=False, schedule_interval='20 0 * * *', max_active_runs=1) as dag:
+with DAG(
+    "clever_spark_DAG", 
+    default_args=default_args, 
+    catchup=False, 
+    schedule_interval='20 0 * * *', 
+    max_active_runs=1
+) as dag:
 
     start_task = EmptyOperator(task_id='Start', dag=dag)
     finish_task = EmptyOperator(task_id='Finish', dag=dag)
 
+    # It may take some time to download the packages from the Maven repository during the first execution.
     for processor in jobs_processors:
         task_id = f"upload_to_postgres_{processor.target_table_name}"
         upload_to_postgres_task = PythonOperator(

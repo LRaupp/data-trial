@@ -32,5 +32,6 @@
     - **Complaint Counting**: Counted the number of complaints for FMCSA companies within the specified period.
 
   - **Running the Dashboard**:
-    - To execute the dashboard, run the notebook located at: `./notebooks/company_reports.ipynb`.
+    - Run the DAG called `clever_spark_DAG`
+    - Execute the dashboard, run the notebook located at: `./notebooks/company_reports.ipynb`.
     - Access the dashboard at: [http://localhost:8050](http://localhost:8050).
