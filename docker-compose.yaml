@@ -353,6 +353,7 @@ services:
     image: jupyter/pyspark-notebook
     ports:
       - "8888:8888"
+      - "8050:8050" # Used for dashboards
     command: start-notebook.sh --NotebookApp.token=''
     volumes:
       - ./notebooks:/home/jovyan/work
