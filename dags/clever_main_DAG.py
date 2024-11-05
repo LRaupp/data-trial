@@ -66,16 +66,16 @@ with DAG(
 # In a real scenario, these jobs would be executed on a cluster using operators like DatabricksRunNowOperator, EmrAddStepsOperator, etc.
 with DAG(
     "clever_spark_DAG", 
-    default_args=default_args, 
+    start_date=datetime(2024, 11, 5),
     catchup=False, 
     schedule_interval='20 0 * * *', 
     max_active_runs=1
 ) as dag:
-
-    start_task = EmptyOperator(task_id='Start', dag=dag)
-    finish_task = EmptyOperator(task_id='Finish', dag=dag)
-
+    
     # It may take some time to download the packages from the Maven repository during the first execution.
+    start_task = PythonOperator(task_id='Start', python_callable=P.BaseProcessor.start_spark_session, dag=dag)
+    finish_task = PythonOperator(task_id='Finish', python_callable=P.BaseProcessor.stop_spark_session, dag=dag)
+
     for processor in jobs_processors:
         task_id = f"upload_to_postgres_{processor.target_table_name}"
         upload_to_postgres_task = PythonOperator(
@@ -85,4 +85,5 @@ with DAG(
         )
 
         start_task.set_downstream(upload_to_postgres_task)
-        upload_to_postgres_task.set_downstream(finish_task)
+    
+    upload_to_postgres_task.set_downstream(finish_task)

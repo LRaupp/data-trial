@@ -1,7 +1,10 @@
 import os
 import scripts.constants as c
+import time
+
 from pyspark.sql import SparkSession, DataFrame as SparkDataFrame, functions as F
 from pyspark import SparkFiles
+
 
 # I want to explore an approach using PySpark, even though it is not ideal to run in the Airflow environment. 
 # The goal of this approach is to exemplify the use of Spark in a scenario where the amount of data is larger and this code would be executed by a cluster.
@@ -14,7 +17,6 @@ class BaseProcessor:
     # Set to be normalized
     source_state_addr_column:str = None 
     source_city_addr_column:str = None
-
 
     db_url = f"jdbc:postgresql://{c.postgres_host}:{c.postgres_port}/{c.postgres_dbname}"
     db_properties = {
@@ -32,11 +34,7 @@ class BaseProcessor:
     }
 
     def __init__(self) -> None:
-        self.spark:SparkSession = SparkSession.builder \
-            .appName("Clever Job Processor") \
-            .config("spark.jars.packages", "org.postgresql:postgresql:42.2.18") \
-            .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
-            .getOrCreate()
+        self._spark = None
 
     @property
     def full_source_path(self) -> str:
@@ -50,17 +48,39 @@ class BaseProcessor:
     def target_table_name(self) -> str:
         """Name of the table containing the data when exported to the database."""
         return self.source_file_name.split(".")[0]
+    
+    @property
+    def spark(self) -> SparkSession:
+        """Loads the default spark session used to run jobs if it's not."""
+        if not self._spark:
+            self._spark = SparkSession.builder \
+                .appName("Job Processor") \
+                .config("spark.jars.packages", "org.postgresql:postgresql:42.2.18") \
+                .config("spark.sql.legacy.timeParserPolicy", "LEGACY") \
+                .getOrCreate()
 
-    def _load_states_df(self) -> SparkDataFrame:
+        return self._spark
+
+    def _load_states_df(self, load_locally:bool=True) -> SparkDataFrame:
         """
         This method loads the updated list of States from a reliable source 
         with the goal of using it to normalize the State name records in the DataFrames, 
         as they are sometimes registered as abbreviations or full names.
         ref: https://geodata.bts.gov/datasets/usdot::states/about
+        :param load_locally: If True, load data from local storage; otherwise, download it from the original source.
         """
-        states_dataset_url = "https://services.arcgis.com/xOi1kZaI0eWDREZv/arcgis/rest/services/NTAD_States/FeatureServer/replicafilescache/NTAD_States_-7783173047193467874.csv"
-        self.spark.sparkContext.addFile(states_dataset_url)
-        return self.spark.read.csv("file://" + SparkFiles.get("NTAD_States_-7783173047193467874.csv"), header=True)
+        file_name = "NTAD_States_-7783173047193467874.csv"
+        
+        # I was experiencing issues related to download server instability, so I adjusted this method to work using locally saved data
+        # I believe that using official reference data is the safest way to normalize city/state values
+        if load_locally:
+            file_path = os.path.join(self.base_source_path, file_name)
+        else:
+            states_dataset_url = "https://services.arcgis.com/xOi1kZaI0eWDREZv/arcgis/rest/services/NTAD_States/FeatureServer/replicafilescache/NTAD_States_-7783173047193467874.csv"
+            self.spark.sparkContext.addFile(states_dataset_url)
+            file_path = "file://" + SparkFiles.get("NTAD_States_-7783173047193467874.csv")
+
+        return self.spark.read.csv(file_path, header=True).cache()
 
     def _load_data(self) -> SparkDataFrame:
         """Load data from file into spark dataframe."""
@@ -108,6 +128,25 @@ class BaseProcessor:
         processed_data = self._transform_data(df=raw_data)
         self._export_data(df=processed_data)
     
+    @classmethod
+    def stop_spark_session(cls) -> None:
+        """Stop the spark sessions created by instances of this class as they use the same appName."""
+        return cls().spark.stop()
+
+    @classmethod
+    def start_spark_session(cls) -> None:
+        """Starts the spark session used by instances of this class and wait until it's available."""
+        retries = 0
+        _inst = cls()
+        
+        while retries < 10:
+            try:
+                _inst.spark.range(1).count()
+                return
+            except:
+                time.sleep(5)
+        
+        raise TimeoutError("Spark session could not be initialized.")
 
 class FMCSABaseProcessor(BaseProcessor):
 
