@@ -66,7 +66,6 @@ with DAG("clever_spark_DAG", default_args=default_args, catchup=False, schedule_
             task_id=task_id,
             python_callable=processor.run,
             dag=dag,
-            execution_timeout=timedelta(seconds=60), # Spark may take some time to download packages from maeven on first run
         )
 
         start_task.set_downstream(upload_to_postgres_task)

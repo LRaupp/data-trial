@@ -1,6 +1,7 @@
 import os
 import scripts.constants as c
 from pyspark.sql import SparkSession, DataFrame as SparkDataFrame, functions as F
+from pyspark import SparkFiles
 
 # I want to explore an approach using PySpark, even though it is not ideal to run in the Airflow environment. 
 # The goal of this approach is to exemplify the use of Spark in a scenario where the amount of data is larger and this code would be executed by a cluster.
@@ -9,6 +10,12 @@ class BaseProcessor:
     """
     Centralize methods used for session initialization, file reading, and file writing.
     """
+    source_file_name:str = None
+    # Set to be normalized
+    source_state_addr_column:str = None 
+    source_city_addr_column:str = None
+
+
     db_url = f"jdbc:postgresql://{c.postgres_host}:{c.postgres_port}/{c.postgres_dbname}"
     db_properties = {
         "user": c.postgres_user,
@@ -17,7 +24,6 @@ class BaseProcessor:
     }
 
     base_source_path:str = "dags/scripts/data_examples/"
-    source_file_name:str = None
     source_read_options = {
         "header": True,
         "multiLine": True,
@@ -45,6 +51,17 @@ class BaseProcessor:
         """Name of the table containing the data when exported to the database."""
         return self.source_file_name.split(".")[0]
 
+    def _load_states_df(self) -> SparkDataFrame:
+        """
+        This method loads the updated list of States from a reliable source 
+        with the goal of using it to normalize the State name records in the DataFrames, 
+        as they are sometimes registered as abbreviations or full names.
+        ref: https://geodata.bts.gov/datasets/usdot::states/about
+        """
+        states_dataset_url = "https://services.arcgis.com/xOi1kZaI0eWDREZv/arcgis/rest/services/NTAD_States/FeatureServer/replicafilescache/NTAD_States_-7783173047193467874.csv"
+        self.spark.sparkContext.addFile(states_dataset_url)
+        return self.spark.read.csv("file://" + SparkFiles.get("NTAD_States_-7783173047193467874.csv"), header=True)
+
     def _load_data(self) -> SparkDataFrame:
         """Load data from file into spark dataframe."""
         return self.spark.read.csv(self.full_source_path, **self.source_read_options)
@@ -52,9 +69,29 @@ class BaseProcessor:
     def _transform_data(self, df:SparkDataFrame) -> SparkDataFrame:
         """
         Perform operations on the DataFrame before sending it to the database.
+        In the base class, we will normalize the names of the states and cities so that all DataFrames processed in the child classes follow the same standard.
         :param df: DataFrame to be processed.
         """
-        return self._load_data()
+        if self.source_state_addr_column:
+            states_df = self._load_states_df()
+            
+            df = df.alias("raw_df")\
+                .join(
+                    other=states_df.alias("states"),
+                    on=(F.lower(F.col(f"raw_df.{self.source_state_addr_column}")) == F.lower("states.NAME")) |\
+                        (F.lower(F.col(f"raw_df.{self.source_state_addr_column}")) == F.lower("states.STUSPS")),
+                    how="left"
+                )\
+                .select(
+                    *[F.col(f"raw_df.{c}") for c in df.columns if c != self.source_state_addr_column],
+                    F.coalesce(F.col("states.NAME"), F.col(f"raw_df.{self.source_state_addr_column}")).alias(self.source_state_addr_column),
+                    F.col("states.STUSPS").alias(f"{self.source_state_addr_column}_abbr"),
+                )
+        
+        if self.source_city_addr_column:
+            df = df.withColumn(self.source_city_addr_column, F.initcap(self.source_city_addr_column))
+
+        return df
 
     def _export_data(self, df:SparkDataFrame) -> None:
         """Export the provided DataFrame to the database."""
@@ -89,6 +126,15 @@ class FMCSABaseProcessor(BaseProcessor):
 class FMCSAComplaintsProcessor(FMCSABaseProcessor):
     source_file_name = 'fmcsa_complaints.csv'
 
+    def _transform_data(self, df: SparkDataFrame) -> SparkDataFrame:
+        transformed = super()._transform_data(df)        
+        return transformed.withColumns(
+            {
+                "complaint_count": F.col("complaint_count").cast("int"),
+                "complaint_year": F.col("complaint_year").cast("int"),
+            }
+        )
+
 
 class FMCSASaferDataProcessor(FMCSABaseProcessor):
     source_file_name = 'fmcsa_safer_data.csv'
@@ -111,6 +157,8 @@ class FMCSACompanySnapshotProcessor(FMCSABaseProcessor):
 
 class FMCSACompaniesProcessor(FMCSABaseProcessor):
     source_file_name = 'fmcsa_companies.csv'
+    source_state_addr_column = 'state'
+    source_city_addr_column = 'city'
 
 
 class GoogleReviewsProcessor(BaseProcessor):
@@ -121,6 +169,7 @@ class GoogleReviewsProcessor(BaseProcessor):
         return transformed.withColumns(
             {
                 "reviews": F.col("reviews").cast("int"),
+                "rating": F.col("reviews").cast("float"),
                 "author_reviews_count": F.col("author_reviews_count").cast("int"),
                 "owner_answer_timestamp_datetime_utc": F.to_timestamp("owner_answer_timestamp_datetime_utc", "MM/dd/yyyy HH:mm"),
                 "review_rating": F.col("review_rating").cast("int"),
@@ -132,6 +181,8 @@ class GoogleReviewsProcessor(BaseProcessor):
 
 class GoogleMapsCompanyProfilesProcessor(BaseProcessor):
     source_file_name = 'company_profiles_google_maps.csv'
+    source_state_addr_column = 'state'
+    source_city_addr_column = 'city'
     
     def _transform_data(self, df: SparkDataFrame) -> SparkDataFrame:
         transformed = super()._transform_data(df)
